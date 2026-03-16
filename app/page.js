@@ -32,7 +32,7 @@ export default function Dashboard() {
 
   // Fetch live conflict data on load, then every hour
   useEffect(() => {
-    async function fetchData() {
+  async function fetchData() {
       try {
         const [conflictsRes, firesRes] = await Promise.all([
           fetch('/api/conflicts'),
@@ -40,6 +40,7 @@ export default function Dashboard() {
         ])
         const conflictsData = await conflictsRes.json()
         const firesData = await firesRes.json()
+        console.log('Events loaded:', conflictsData.events?.length, conflictsData.events?.[0])
         setEvents(conflictsData.events || [])
         setFires(firesData.fires || [])
       } catch (err) {
@@ -407,4 +408,3 @@ function PolicyPanel({ events }) {
       </div>
     </div>
   )
-}

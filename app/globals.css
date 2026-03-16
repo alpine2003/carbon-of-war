@@ -1,5 +1,5 @@
-/* app/globals.css */
 @import url('https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css');
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -11,6 +11,3 @@ html, body {
   background: #060606;
   color: #e8e8e8;
 }
-
-/* Mapbox CSS — required for the map to render correctly */
-@import url('https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css');
