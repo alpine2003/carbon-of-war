@@ -1,4 +1,3 @@
-// components/ConflictMap.js
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { estimateEventEmissions } from '../lib/emissions'
@@ -6,18 +5,14 @@ import { estimateEventEmissions } from '../lib/emissions'
 export default function ConflictMap({ events, fires, onSelectConflict }) {
   const mapContainer = useRef(null)
   const map = useRef(null)
-  const markersRef = useRef([])
-  const plumeAnimationsRef = useRef([])
   const [mapLoaded, setMapLoaded] = useState(false)
+  const [tooltip, setTooltip] = useState(null)
 
-  // Initialize map
   useEffect(() => {
     if (map.current || !mapContainer.current) return
-
     import('mapbox-gl').then((mapboxgl) => {
       const mb = mapboxgl.default
       mb.accessToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-
       map.current = new mb.Map({
         container: mapContainer.current,
         style: 'mapbox://styles/mapbox/dark-v11',
@@ -26,9 +21,7 @@ export default function ConflictMap({ events, fires, onSelectConflict }) {
         projection: 'globe',
         antialias: true,
       })
-
       map.current.on('load', () => {
-        // Atmosphere
         map.current.setFog({
           color: 'rgb(8, 8, 18)',
           'high-color': 'rgb(15, 15, 35)',
@@ -39,155 +32,221 @@ export default function ConflictMap({ events, fires, onSelectConflict }) {
         setMapLoaded(true)
       })
     })
-
     return () => {
-      plumeAnimationsRef.current.forEach(id => cancelAnimationFrame(id))
-      markersRef.current.forEach(m => m.remove())
       if (map.current) { map.current.remove(); map.current = null }
     }
   }, [])
 
-  // Add markers + plumes when map loads and events arrive
   useEffect(() => {
     if (!mapLoaded || !map.current || !events?.length) return
 
-    import('mapbox-gl').then((mapboxgl) => {
-      const mb = mapboxgl.default
+    const COLOR_MAP = {
+      'Air strike':     '#ff3333',
+      'Missile strike': '#ff6600',
+      'Shelling':       '#ffcc00',
+      'Drone strike':   '#cc44ff',
+      'Naval attack':   '#4488ff',
+      'Armed clash':    '#44aaff',
+    }
 
-      // Clear old markers and animations
-      plumeAnimationsRef.current.forEach(id => cancelAnimationFrame(id))
-      plumeAnimationsRef.current = []
-      markersRef.current.forEach(m => m.remove())
-      markersRef.current = []
+    // Build GeoJSON from events
+    const geojson = {
+      type: 'FeatureCollection',
+      features: events
+        .filter(e => e.latitude && e.longitude)
+        .map((event) => {
+          const emissions = estimateEventEmissions(event)
+          const color = COLOR_MAP[event.sub_event_type] || '#44aaff'
+          return {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [
+                parseFloat(event.longitude),
+                parseFloat(event.latitude),
+              ],
+            },
+            properties: {
+              ...event,
+              emissionsMid: emissions.mid,
+              emissionsLow: emissions.low,
+              emissionsHigh: emissions.high,
+              color,
+              radius: Math.max(6, Math.min(20, emissions.mid / 10)),
+            },
+          }
+        }),
+    }
 
-      events.forEach((event, idx) => {
-        const lat = parseFloat(event.latitude)
-        const lng = parseFloat(event.longitude)
-        if (isNaN(lat) || isNaN(lng)) return
+    // Remove old layers if they exist
+    ['conflict-points', 'conflict-halos', 'conflict-pulse'].forEach(id => {
+      if (map.current.getLayer(id)) map.current.removeLayer(id)
+    })
+    if (map.current.getSource('conflicts')) {
+      map.current.removeSource('conflicts')
+    }
 
-        const emissions = estimateEventEmissions(event)
-        const type = event.sub_event_type || 'Armed clash'
+    map.current.addSource('conflicts', { type: 'geojson', data: geojson })
 
-        // Color per event type
-        const colorMap = {
-          'Air strike':     { ring: '#ff3333', plume: '#ff4444', core: '#ff8888' },
-          'Missile strike': { ring: '#ff6600', plume: '#ff7700', core: '#ffaa44' },
-          'Shelling':       { ring: '#ffcc00', plume: '#ffdd00', core: '#ffee88' },
-          'Drone strike':   { ring: '#cc44ff', plume: '#dd55ff', core: '#ee99ff' },
-          'Naval attack':   { ring: '#4488ff', plume: '#5599ff', core: '#88bbff' },
-          'Armed clash':    { ring: '#44aaff', plume: '#55bbff', core: '#88ddff' },
-        }
-        const colors = colorMap[type] || colorMap['Armed clash']
+    // Outer glow halo
+    map.current.addLayer({
+      id: 'conflict-halos',
+      type: 'circle',
+      source: 'conflicts',
+      paint: {
+        'circle-radius': ['*', ['get', 'radius'], 2.5],
+        'circle-color': ['get', 'color'],
+        'circle-opacity': 0.15,
+        'circle-blur': 1,
+      },
+    })
 
-        // Plume canvas — animated rising CO2 particles
-        const canvas = document.createElement('canvas')
-        const size = Math.max(60, Math.min(140, emissions.mid / 2))
-        canvas.width = size
-        canvas.height = size
-        canvas.style.width = size + 'px'
-        canvas.style.height = size + 'px'
-        canvas.style.cursor = 'pointer'
-        canvas.style.pointerEvents = 'auto'
+    // Main dot
+    map.current.addLayer({
+      id: 'conflict-points',
+      type: 'circle',
+      source: 'conflicts',
+      paint: {
+        'circle-radius': ['get', 'radius'],
+        'circle-color': ['get', 'color'],
+        'circle-opacity': 0.9,
+        'circle-stroke-width': 1,
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-opacity': 0.3,
+      },
+    })
 
-        const ctx = canvas.getContext('2d')
+    // Click handler
+    map.current.on('click', 'conflict-points', (e) => {
+      const props = e.features[0].properties
+      const event = {
+        event_id_cnty: props.event_id_cnty,
+        event_date: props.event_date,
+        event_type: props.event_type,
+        sub_event_type: props.sub_event_type,
+        country: props.country,
+        location: props.location,
+        latitude: props.latitude,
+        longitude: props.longitude,
+        fatalities: props.fatalities,
+        notes: props.notes,
+      }
+      const emissions = {
+        mid: props.emissionsMid,
+        low: props.emissionsLow,
+        high: props.emissionsHigh,
+        category: 'direct',
+      }
+      onSelectConflict && onSelectConflict({ event, emissions })
+    })
 
-        // Particle system for the plume
-        const particles = Array.from({ length: 18 }, (_, i) => ({
-          x: size / 2 + (Math.random() - 0.5) * 8,
-          y: size * 0.75,
-          vx: (Math.random() - 0.5) * 0.6,
-          vy: -(0.4 + Math.random() * 0.8),
-          life: Math.random(),
-          maxLife: 0.6 + Math.random() * 0.4,
-          r: 2 + Math.random() * (emissions.mid / 60),
-          phase: Math.random() * Math.PI * 2,
-        }))
-
-        let frameId
-        const animate = () => {
-          ctx.clearRect(0, 0, size, size)
-
-          // Impact ring pulse
-          const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 600)
-          ctx.beginPath()
-          ctx.arc(size / 2, size * 0.78, (6 + pulse * 4), 0, Math.PI * 2)
-          ctx.strokeStyle = colors.ring
-          ctx.lineWidth = 1.5
-          ctx.globalAlpha = 0.8 - pulse * 0.3
-          ctx.stroke()
-
-          // Core dot
-          ctx.beginPath()
-          ctx.arc(size / 2, size * 0.78, 4, 0, Math.PI * 2)
-          ctx.fillStyle = colors.core
-          ctx.globalAlpha = 1
-          ctx.fill()
-
-          // Outer expanding ring
-          const expand = (Date.now() % 2000) / 2000
-          ctx.beginPath()
-          ctx.arc(size / 2, size * 0.78, 6 + expand * 18, 0, Math.PI * 2)
-          ctx.strokeStyle = colors.ring
-          ctx.lineWidth = 1
-          ctx.globalAlpha = (1 - expand) * 0.5
-          ctx.stroke()
-
-          // Plume particles
-          particles.forEach(p => {
-            p.life += 0.008
-            if (p.life >= p.maxLife) {
-              p.life = 0
-              p.x = size / 2 + (Math.random() - 0.5) * 8
-              p.y = size * 0.75
-              p.vx = (Math.random() - 0.5) * 0.6
-              p.vy = -(0.4 + Math.random() * 0.8)
-            }
-            p.x += p.vx + Math.sin(Date.now() / 800 + p.phase) * 0.15
-            p.y += p.vy
-
-            const t = p.life / p.maxLife
-            const alpha = t < 0.3 ? t / 0.3 : 1 - ((t - 0.3) / 0.7)
-            const radius = p.r * (0.5 + t * 1.2)
-
-            // Gradient per particle
-            const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius * 2)
-            grad.addColorStop(0, colors.plume)
-            grad.addColorStop(1, 'transparent')
-            ctx.beginPath()
-            ctx.arc(p.x, p.y, radius * 2, 0, Math.PI * 2)
-            ctx.fillStyle = grad
-            ctx.globalAlpha = alpha * 0.55
-            ctx.fill()
-          })
-
-          frameId = requestAnimationFrame(animate)
-        }
-
-        animate()
-        plumeAnimationsRef.current.push(frameId)
-
-        canvas.addEventListener('click', () => {
-          onSelectConflict && onSelectConflict({ event, emissions })
-        })
-
-        const marker = new mb.Marker({ element: canvas, anchor: 'bottom' })
-          .setLngLat([lng, lat])
-          .addTo(map.current)
-
-        markersRef.current.push(marker)
+    // Hover tooltip
+    map.current.on('mouseenter', 'conflict-points', (e) => {
+      map.current.getCanvas().style.cursor = 'pointer'
+      const props = e.features[0].properties
+      setTooltip({
+        country: props.country,
+        location: props.location,
+        type: props.sub_event_type,
+        date: props.event_date,
+        emissions: props.emissionsMid,
+        notes: props.notes,
       })
     })
+
+    map.current.on('mouseleave', 'conflict-points', () => {
+      map.current.getCanvas().style.cursor = ''
+      setTooltip(null)
+    })
+
+    // Animate pulse effect
+    let radius = 0
+    let growing = true
+    const animatePulse = () => {
+      if (!map.current || !map.current.getLayer('conflict-halos')) return
+      if (growing) {
+        radius += 0.04
+        if (radius >= 1) growing = false
+      } else {
+        radius -= 0.04
+        if (radius <= 0) growing = true
+      }
+      map.current.setPaintProperty(
+        'conflict-halos',
+        'circle-opacity',
+        0.08 + radius * 0.15
+      )
+      map.current.setPaintProperty(
+        'conflict-halos',
+        'circle-radius',
+        ['*', ['get', 'radius'], 2 + radius * 1.5]
+      )
+      requestAnimationFrame(animatePulse)
+    }
+    animatePulse()
+
   }, [mapLoaded, events])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 
+      {/* Hover tooltip */}
+      {tooltip && (
+        <div style={{
+          position: 'absolute', top: '16px', left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(6,6,6,0.96)',
+          border: '1px solid #222',
+          borderRadius: '10px',
+          padding: '12px 18px',
+          pointerEvents: 'none',
+          maxWidth: '320px',
+          zIndex: 10,
+        }}>
+          <div style={{ fontSize: '13px', fontWeight: '600', color: '#e8e8e8', marginBottom: '3px' }}>
+            {tooltip.type} — {tooltip.location}
+          </div>
+          <div style={{ fontSize: '11px', color: '#666', marginBottom: '6px' }}>
+            {tooltip.country} · {tooltip.date}
+          </div>
+          <div style={{ fontSize: '13px', color: '#c8f064', fontFamily: 'monospace' }}>
+            ~{tooltip.emissions} tonnes CO₂-eq
+          </div>
+          {tooltip.notes && (
+            <div style={{ fontSize: '11px', color: '#555', marginTop: '4px' }}>
+              {String(tooltip.notes).slice(0, 80)}...
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Active incidents counter */}
+      <div style={{
+        position: 'absolute', top: '16px', left: '16px',
+        background: 'rgba(6,6,6,0.92)',
+        border: '1px solid #1a1a1a',
+        borderRadius: '10px',
+        padding: '12px 16px',
+      }}>
+        <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.12em' }}>
+          ACTIVE INCIDENTS
+        </div>
+        <div style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#c8f064' }}>
+          {events?.length || 0}
+        </div>
+        <div style={{ fontSize: '10px', color: '#444' }}>
+          last 30 days · click any dot
+        </div>
+      </div>
+
       {/* Legend */}
       <div style={{
         position: 'absolute', bottom: '24px', right: '16px',
-        background: 'rgba(6,6,6,0.92)', border: '1px solid #1a1a1a',
-        borderRadius: '10px', padding: '14px 16px',
+        background: 'rgba(6,6,6,0.92)',
+        border: '1px solid #1a1a1a',
+        borderRadius: '10px',
+        padding: '14px 16px',
       }}>
         {[
           { color: '#ff3333', label: 'Air strike' },
@@ -197,7 +256,10 @@ export default function ConflictMap({ events, fires, onSelectConflict }) {
           { color: '#4488ff', label: 'Naval attack' },
           { color: '#44aaff', label: 'Armed clash' },
         ].map(item => (
-          <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+          <div key={item.label} style={{
+            display: 'flex', alignItems: 'center',
+            gap: '8px', marginBottom: '6px',
+          }}>
             <div style={{
               width: '8px', height: '8px', borderRadius: '50%',
               background: item.color,
@@ -206,26 +268,16 @@ export default function ConflictMap({ events, fires, onSelectConflict }) {
             <span style={{ fontSize: '11px', color: '#888' }}>{item.label}</span>
           </div>
         ))}
-        <div style={{ borderTop: '1px solid #1a1a1a', marginTop: '8px', paddingTop: '8px', fontSize: '10px', color: '#444' }}>
-          Plume size = estimated CO₂-eq
+        <div style={{
+          borderTop: '1px solid #1a1a1a',
+          marginTop: '8px', paddingTop: '8px',
+          fontSize: '10px', color: '#444',
+        }}>
+          Dot size = estimated CO₂-eq
         </div>
-      </div>
-
-      {/* Active conflict counter */}
-      <div style={{
-        position: 'absolute', top: '16px', left: '16px',
-        background: 'rgba(6,6,6,0.92)', border: '1px solid #1a1a1a',
-        borderRadius: '10px', padding: '12px 16px',
-        display: 'flex', flexDirection: 'column', gap: '4px',
-      }}>
-        <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.12em' }}>
-          ACTIVE INCIDENTS
-        </div>
-        <div style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#c8f064' }}>
-          {events?.length || 0}
-        </div>
-        <div style={{ fontSize: '10px', color: '#444' }}>last 30 days · click any plume</div>
       </div>
     </div>
   )
 }
+```
+
