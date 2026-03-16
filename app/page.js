@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import DebtClock from '../components/DebtClock'
 import ConflictCard from '../components/ConflictCard'
 import ConflictLedger from '../components/ConflictLedger'
+import { aggregateEmissions, formatTons } from '../lib/emissions'
 
 // Map must be loaded client-side only (it uses browser APIs)
 const ConflictMap = dynamic(() => import('../components/ConflictMap'), {
@@ -326,7 +327,6 @@ function SimulatorPanel() {
 
 // ─── POLICY AUDIT PANEL ────────────────────────────────────────────
 function PolicyPanel({ events }) {
-  const { aggregateEmissions, formatTons } = require('../lib/emissions')
   const totals = events.length ? aggregateEmissions(events) : { low: 0, mid: 0, high: 0 }
 
   const COUNTRIES_DATA = [
