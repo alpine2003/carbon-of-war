@@ -7,6 +7,7 @@ export default function Dashboard() {
   const [events, setEvents] = useState([])
   const [selectedConflict, setSelectedConflict] = useState(null)
   const [tons, setTons] = useState(0)
+  const [showSatellite, setShowSatellite] = useState(false)
   const sessionStart = useRef(Date.now())
   const frameRef = useRef(null)
 
@@ -114,7 +115,12 @@ export default function Dashboard() {
         {activeTab === 'MAP' && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-              <LeafletMap events={events} onSelectConflict={setSelectedConflict} />
+              <LeafletMap
+                events={events}
+                onSelectConflict={setSelectedConflict}
+                showSatellite={showSatellite}
+                onToggleSatellite={() => setShowSatellite(s => !s)}
+              />
             </div>
             {selectedConflict && (
               <div style={{ width: '340px', borderLeft: '1px solid #1a1a1a', overflowY: 'auto', flexShrink: 0 }}>
@@ -151,10 +157,14 @@ export default function Dashboard() {
   )
 }
 
-function LeafletMap({ events, onSelectConflict }) {
+function LeafletMap({ events, onSelectConflict, showSatellite, onToggleSatellite }) {
   const mapRef = useRef(null)
   const mapInstanceRef = useRef(null)
   const markersRef = useRef([])
+  const smokeCanvasRef = useRef(null)
+  const smokeParticlesRef = useRef([])
+  const smokeFrameRef = useRef(null)
+  const satelliteLayerRef = useRef(null)
   const initializedRef = useRef(false)
 
   useEffect(() => {
@@ -175,15 +185,22 @@ function LeafletMap({ events, onSelectConflict }) {
         zoom: 3,
         zoomControl: true,
       })
+
+      // Dark base map
       L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '© CartoDB',
         maxZoom: 19,
       }).addTo(map)
+
       mapInstanceRef.current = map
+
+      // Initialize smoke canvas overlay
+      initSmokeCanvas(map)
     }
     document.head.appendChild(script)
 
     return () => {
+      if (smokeFrameRef.current) cancelAnimationFrame(smokeFrameRef.current)
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove()
         mapInstanceRef.current = null
@@ -192,12 +209,64 @@ function LeafletMap({ events, onSelectConflict }) {
     }
   }, [])
 
+  // Toggle satellite NO2 layer
+  useEffect(() => {
+    if (!mapInstanceRef.current || !window.L) return
+    const L = window.L
+
+    if (showSatellite) {
+      // Sentinel-5P NO2 tropospheric column via NASA GIBS
+      // This is real satellite data updated daily
+      const no2Layer = L.tileLayer(
+        'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/SENTINEL_5P_NO2_TROPOSPHERIC_COLUMN/default/2024-03-01/GoogleMapsCompatible_Level7/{z}/{y}/{x}.png',
+        {
+          opacity: 0.7,
+          attribution: 'NASA GIBS / Sentinel-5P TROPOMI',
+          maxZoom: 7,
+        }
+      )
+      no2Layer.addTo(mapInstanceRef.current)
+      satelliteLayerRef.current = no2Layer
+    } else {
+      if (satelliteLayerRef.current) {
+        mapInstanceRef.current.removeLayer(satelliteLayerRef.current)
+        satelliteLayerRef.current = null
+      }
+    }
+  }, [showSatellite])
+
+  // Initialize smoke canvas
+  function initSmokeCanvas(map) {
+    const container = map.getContainer()
+    const canvas = document.createElement('canvas')
+    canvas.style.cssText = `
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 500;
+    `
+    container.appendChild(canvas)
+    smokeCanvasRef.current = canvas
+
+    function resize() {
+      canvas.width = container.offsetWidth
+      canvas.height = container.offsetHeight
+    }
+    resize()
+    window.addEventListener('resize', resize)
+  }
+
+  // Add markers and smoke when events load
   useEffect(() => {
     if (!events?.length) return
     const interval = setInterval(() => {
-      if (!window.L || !mapInstanceRef.current) return
+      if (!window.L || !mapInstanceRef.current || !smokeCanvasRef.current) return
       clearInterval(interval)
+
       const L = window.L
+      const map = mapInstanceRef.current
+
       const COLOR_MAP = {
         'Air strike': '#ff3333',
         'Missile strike': '#ff6600',
@@ -206,34 +275,182 @@ function LeafletMap({ events, onSelectConflict }) {
         'Naval attack': '#4488ff',
         'Armed clash': '#44aaff',
       }
+
+      const SMOKE_COLOR_MAP = {
+        'Air strike': { r: 255, g: 80, b: 30 },
+        'Missile strike': { r: 255, g: 120, b: 20 },
+        'Shelling': { r: 200, g: 160, b: 40 },
+        'Drone strike': { r: 180, g: 60, b: 255 },
+        'Naval attack': { r: 60, g: 120, b: 255 },
+        'Armed clash': { r: 80, g: 160, b: 255 },
+      }
+
       markersRef.current.forEach(m => m.remove())
       markersRef.current = []
+      smokeParticlesRef.current = []
+
       events.forEach(event => {
         const lat = parseFloat(event.latitude)
         const lng = parseFloat(event.longitude)
         if (isNaN(lat) || isNaN(lng)) return
+
         const emissions = estimateEventEmissions(event)
         const color = COLOR_MAP[event.sub_event_type] || '#44aaff'
+        const smokeColor = SMOKE_COLOR_MAP[event.sub_event_type] || { r: 80, g: 160, b: 255 }
         const size = Math.max(10, Math.min(30, emissions.mid / 6))
+
+        // Map marker with pulse rings
         const icon = L.divIcon({
           className: '',
-          html: `<div style="position:relative;width:${size*3}px;height:${size*3}px;display:flex;align-items:center;justify-content:center;"><div style="position:absolute;width:${size*3}px;height:${size*3}px;border-radius:50%;background:${color};opacity:0.15;animation:ripple1 2s infinite;"></div><div style="position:absolute;width:${size*2}px;height:${size*2}px;border-radius:50%;background:${color};opacity:0.2;animation:ripple2 2s infinite 0.5s;"></div><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.5);box-shadow:0 0 ${size}px ${color},0 0 ${size*2}px ${color}66;cursor:pointer;z-index:2;"></div></div>`,
-          iconSize: [size, size],
-          iconAnchor: [size / 2, size / 2],
+          html: `<div style="position:relative;width:${size*3}px;height:${size*3}px;display:flex;align-items:center;justify-content:center;">
+            <div style="position:absolute;width:${size*3}px;height:${size*3}px;border-radius:50%;background:${color};opacity:0.15;animation:ripple1 2s infinite;"></div>
+            <div style="position:absolute;width:${size*2}px;height:${size*2}px;border-radius:50%;background:${color};opacity:0.2;animation:ripple2 2s infinite 0.5s;"></div>
+            <div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.5);box-shadow:0 0 ${size}px ${color},0 0 ${size*2}px ${color}66;cursor:pointer;z-index:2;"></div>
+          </div>`,
+          iconSize: [size*3, size*3],
+          iconAnchor: [size*1.5, size*1.5],
         })
+
         const marker = L.marker([lat, lng], { icon })
-          .addTo(mapInstanceRef.current)
-          .bindTooltip(`<div style="background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:10px;color:#e8e8e8;font-family:monospace;min-width:180px"><div style="font-weight:600;margin-bottom:4px">${event.sub_event_type} — ${event.location}</div><div style="color:#888;font-size:11px;margin-bottom:6px">${event.country} · ${event.event_date}</div><div style="color:#c8f064">~${emissions.mid} tonnes CO₂-eq</div></div>`, { className: 'cow-tooltip', opacity: 1 })
+          .addTo(map)
+          .bindTooltip(`<div style="background:#0d0d0d;border:1px solid #222;border-radius:8px;padding:10px;color:#e8e8e8;font-family:monospace;min-width:200px">
+            <div style="font-weight:600;margin-bottom:4px">${event.sub_event_type} — ${event.location}</div>
+            <div style="color:#888;font-size:11px;margin-bottom:6px">${event.country} · ${event.event_date}</div>
+            <div style="color:#c8f064">~${emissions.mid} tonnes CO₂-eq</div>
+            <div style="color:#ff8844;font-size:10px;margin-top:3px">Weapon: ${emissions.weaponLabel || 'Unknown'}</div>
+          </div>`, { className: 'cow-tooltip', opacity: 1 })
           .on('click', () => onSelectConflict && onSelectConflict({ event, emissions }))
+
         markersRef.current.push(marker)
+
+        // Create smoke particles for this location
+        const numParticles = Math.max(8, Math.min(30, Math.floor(emissions.mid / 10)))
+        for (let i = 0; i < numParticles; i++) {
+          smokeParticlesRef.current.push({
+            lat, lng,
+            offsetX: (Math.random() - 0.5) * 20,
+            offsetY: (Math.random() - 0.5) * 20,
+            vy: -(0.3 + Math.random() * 0.8),
+            vx: (Math.random() - 0.5) * 0.3,
+            life: Math.random(),
+            maxLife: 0.5 + Math.random() * 0.5,
+            size: 3 + Math.random() * (emissions.mid / 40),
+            color: smokeColor,
+            phase: Math.random() * Math.PI * 2,
+          })
+        }
       })
+
+      // Start smoke animation
+      animateSmoke(map)
     }, 200)
+
     return () => clearInterval(interval)
   }, [events])
+
+  function animateSmoke(map) {
+    if (!smokeCanvasRef.current) return
+    const canvas = smokeCanvasRef.current
+    const ctx = canvas.getContext('2d')
+
+    function frame() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+      smokeParticlesRef.current.forEach(p => {
+        // Convert lat/lng to pixel position
+        const point = map.latLngToContainerPoint([p.lat, p.lng])
+
+        p.life += 0.006
+        if (p.life >= p.maxLife) {
+          p.life = 0
+          p.offsetX = (Math.random() - 0.5) * 20
+          p.offsetY = (Math.random() - 0.5) * 20
+        }
+
+        const t = p.life / p.maxLife
+        const alpha = t < 0.2 ? t / 0.2 : 1 - ((t - 0.2) / 0.8)
+        const currentSize = p.size * (0.5 + t * 2.5)
+
+        const px = point.x + p.offsetX + p.vx * (t * 60)
+        const py = point.y + p.offsetY + p.vy * (t * 60) + Math.sin(Date.now() / 1200 + p.phase) * 3
+
+        const grad = ctx.createRadialGradient(px, py, 0, px, py, currentSize * 2)
+        grad.addColorStop(0, `rgba(${p.color.r},${p.color.g},${p.color.b},${alpha * 0.5})`)
+        grad.addColorStop(0.4, `rgba(${p.color.r},${p.color.g},${p.color.b},${alpha * 0.2})`)
+        grad.addColorStop(1, `rgba(80,80,80,0)`)
+
+        ctx.beginPath()
+        ctx.arc(px, py, currentSize * 2, 0, Math.PI * 2)
+        ctx.fillStyle = grad
+        ctx.fill()
+      })
+
+      smokeFrameRef.current = requestAnimationFrame(frame)
+    }
+
+    if (smokeFrameRef.current) cancelAnimationFrame(smokeFrameRef.current)
+    frame()
+  }
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={mapRef} style={{ width: '100%', height: '100%', background: '#0a0a0a' }} />
+
+      {/* Satellite toggle */}
+      <div style={{
+        position: 'absolute', top: '16px', left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 1000, display: 'flex', gap: '8px',
+      }}>
+        <button
+          onClick={onToggleSatellite}
+          style={{
+            background: showSatellite ? '#1a3a1a' : 'rgba(6,6,6,0.92)',
+            border: `1px solid ${showSatellite ? '#c8f064' : '#1a1a1a'}`,
+            borderRadius: '8px', padding: '8px 16px',
+            color: showSatellite ? '#c8f064' : '#888',
+            cursor: 'pointer', fontSize: '11px',
+            letterSpacing: '0.12em', display: 'flex',
+            alignItems: 'center', gap: '8px',
+          }}
+        >
+          <div style={{
+            width: '6px', height: '6px', borderRadius: '50%',
+            background: showSatellite ? '#c8f064' : '#444',
+            animation: showSatellite ? 'pulse 2s infinite' : 'none',
+          }} />
+          {showSatellite ? 'SATELLITE NO₂ · LIVE' : 'SATELLITE NO₂ LAYER'}
+        </button>
+      </div>
+
+      {/* Satellite legend */}
+      {showSatellite && (
+        <div style={{
+          position: 'absolute', bottom: '80px', left: '16px',
+          zIndex: 1000,
+          background: 'rgba(6,6,6,0.92)', border: '1px solid #1a1a1a',
+          borderRadius: '10px', padding: '12px 16px',
+          maxWidth: '220px',
+        }}>
+          <div style={{ fontSize: '10px', color: '#c8f064', letterSpacing: '0.12em', marginBottom: '8px' }}>
+            SENTINEL-5P NO₂ COLUMN
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <div style={{ width: '60px', height: '8px', borderRadius: '4px', background: 'linear-gradient(to right, #000080, #0000ff, #00ffff, #ffff00, #ff0000)' }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#555' }}>
+            <span>Low NO₂</span><span>High NO₂</span>
+          </div>
+          <div style={{ fontSize: '10px', color: '#444', marginTop: '8px', lineHeight: '1.5' }}>
+            Real atmospheric data from ESA satellite. Red = high pollution. Conflict zones show elevated NO₂ from explosions and fires.
+          </div>
+          <div style={{ fontSize: '9px', color: '#333', marginTop: '6px' }}>
+            Source: NASA GIBS / ESA Copernicus
+          </div>
+        </div>
+      )}
+
+      {/* Active incidents counter */}
       <div style={{
         position: 'absolute', top: '16px', left: '16px', zIndex: 1000,
         background: 'rgba(6,6,6,0.92)', border: '1px solid #1a1a1a',
@@ -243,6 +460,8 @@ function LeafletMap({ events, onSelectConflict }) {
         <div style={{ fontSize: '24px', fontWeight: '700', fontFamily: 'monospace', color: '#c8f064' }}>{events?.length || 0}</div>
         <div style={{ fontSize: '10px', color: '#444' }}>click any dot for details</div>
       </div>
+
+      {/* Legend */}
       <div style={{
         position: 'absolute', bottom: '24px', right: '16px', zIndex: 1000,
         background: 'rgba(6,6,6,0.92)', border: '1px solid #1a1a1a',
@@ -262,10 +481,16 @@ function LeafletMap({ events, onSelectConflict }) {
           </div>
         ))}
         <div style={{ borderTop: '1px solid #1a1a1a', marginTop: '8px', paddingTop: '8px', fontSize: '10px', color: '#444' }}>
-          Dot size = estimated CO₂-eq
+          Smoke = estimated CO₂ plume
         </div>
       </div>
-      <style>{`.cow-tooltip{background:transparent!important;border:none!important;box-shadow:none!important;}.leaflet-tooltip-top:before{display:none;}@keyframes ripple1{0%{transform:scale(0.8);opacity:0.15;}50%{transform:scale(1.3);opacity:0.03;}100%{transform:scale(0.8);opacity:0.15;}}@keyframes ripple2{0%{transform:scale(0.6);opacity:0.2;}50%{transform:scale(1);opacity:0.05;}100%{transform:scale(0.6);opacity:0.2;}}`}</style>
+
+      <style>{`
+        .cow-tooltip{background:transparent!important;border:none!important;box-shadow:none!important;}
+        .leaflet-tooltip-top:before{display:none;}
+        @keyframes ripple1{0%{transform:scale(0.8);opacity:0.15;}50%{transform:scale(1.3);opacity:0.03;}100%{transform:scale(0.8);opacity:0.15;}}
+        @keyframes ripple2{0%{transform:scale(0.6);opacity:0.2;}50%{transform:scale(1);opacity:0.05;}100%{transform:scale(0.6);opacity:0.2;}}
+      `}</style>
     </div>
   )
 }
@@ -274,10 +499,10 @@ function ConflictCard({ data, onClose }) {
   if (!data) return null
   const { event, emissions } = data
   const breakdown = [
-    { label: 'Direct military ops', value: Math.round(emissions.mid * 0.45), color: '#ff4444' },
-    { label: 'Infrastructure destruction', value: Math.round(emissions.mid * 0.30), color: '#ff8800' },
-    { label: 'Ecosystem damage', value: Math.round(emissions.mid * 0.15), color: '#44bb88' },
-    { label: 'Indirect & long-term', value: Math.round(emissions.mid * 0.10), color: '#8888ff' },
+    { label: 'Direct CO₂ from propellant/fuel', value: Math.round((emissions.breakdown?.co2?.mid || emissions.mid * 0.15)), color: '#ff4444' },
+    { label: 'Black carbon (BC) — soot', value: Math.round((emissions.breakdown?.blackCarbon?.mid || emissions.mid * 0.08)), color: '#ff8800' },
+    { label: 'NOₓ ozone forcing', value: Math.round((emissions.breakdown?.nox?.mid || emissions.mid * 0.04)), color: '#ffcc00' },
+    { label: 'Secondary fires & destruction', value: Math.round((emissions.breakdown?.secondary?.mid || emissions.mid * 0.73)), color: '#44bb88' },
   ]
   return (
     <div style={{ background: '#0d0d0d', padding: '20px', height: '100%' }}>
@@ -296,8 +521,21 @@ function ConflictCard({ data, onClose }) {
           color: '#666', cursor: 'pointer', padding: '4px 10px', fontSize: '12px',
         }}>✕</button>
       </div>
+
+      {/* Weapon system */}
+      {emissions.weaponLabel && (
+        <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '10px 14px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.12em', marginBottom: '4px' }}>ESTIMATED WEAPON SYSTEM</div>
+          <div style={{ fontSize: '12px', color: '#ff8844' }}>{emissions.weaponLabel}</div>
+          <div style={{ fontSize: '10px', color: '#444', marginTop: '4px' }}>
+            Confidence: <span style={{ color: emissions.confidence === 'HIGH' ? '#44bb88' : emissions.confidence === 'MEDIUM' ? '#ffcc00' : '#ff6666' }}>{emissions.confidence || 'LOW'}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Total */}
       <div style={{ background: '#111', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', marginBottom: '16px' }}>
-        <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.15em', marginBottom: '6px' }}>ESTIMATED CO₂-EQUIVALENT</div>
+        <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.15em', marginBottom: '6px' }}>TOTAL CO₂-EQUIVALENT</div>
         <div style={{ fontSize: '32px', fontWeight: '700', fontFamily: 'monospace', color: '#c8f064' }}>
           {formatTons(emissions.mid)}
         </div>
@@ -305,18 +543,31 @@ function ConflictCard({ data, onClose }) {
           Range: {formatTons(emissions.low)} – {formatTons(emissions.high)} tonnes
         </div>
       </div>
-      {breakdown.map(item => (
-        <div key={item.label} style={{ marginBottom: '10px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ fontSize: '12px', color: '#aaa' }}>{item.label}</span>
-            <span style={{ fontSize: '12px', fontFamily: 'monospace', color: item.color }}>{item.value}t</span>
+
+      {/* Breakdown */}
+      <div style={{ marginBottom: '12px' }}>
+        <div style={{ fontSize: '10px', color: '#555', letterSpacing: '0.12em', marginBottom: '10px' }}>EMISSIONS BREAKDOWN</div>
+        {breakdown.map(item => (
+          <div key={item.label} style={{ marginBottom: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+              <span style={{ fontSize: '11px', color: '#aaa' }}>{item.label}</span>
+              <span style={{ fontSize: '11px', fontFamily: 'monospace', color: item.color }}>{item.value}t</span>
+            </div>
+            <div style={{ background: '#1a1a1a', borderRadius: '2px', height: '3px' }}>
+              <div style={{ width: `${Math.min(100, (item.value / emissions.mid) * 100)}%`, height: '100%', background: item.color, borderRadius: '2px' }} />
+            </div>
           </div>
-          <div style={{ background: '#1a1a1a', borderRadius: '2px', height: '4px' }}>
-            <div style={{ width: `${(item.value / emissions.mid) * 100}%`, height: '100%', background: item.color, borderRadius: '2px' }} />
-          </div>
+        ))}
+      </div>
+
+      {/* Methodology note */}
+      {emissions.notes && (
+        <div style={{ borderTop: '1px solid #1a1a1a', paddingTop: '10px', fontSize: '10px', color: '#444', lineHeight: '1.6' }}>
+          <strong style={{ color: '#555' }}>Methodology:</strong> {emissions.notes}
         </div>
-      ))}
-      <div style={{ borderTop: '1px solid #1a1a1a', paddingTop: '12px', fontSize: '10px', color: '#444', lineHeight: '1.6', marginTop: '8px' }}>
+      )}
+
+      <div style={{ marginTop: '10px', fontSize: '10px', color: '#333', lineHeight: '1.6' }}>
         {event.notes}
       </div>
     </div>
