@@ -279,5 +279,4 @@ export default function ConflictMap({ events, fires, onSelectConflict }) {
     </div>
   )
 }
-```
 
