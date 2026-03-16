@@ -217,7 +217,7 @@ function LeafletMap({ events, onSelectConflict }) {
         const size = Math.max(10, Math.min(30, emissions.mid / 6))
         const icon = L.divIcon({
           className: '',
-          html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.4);box-shadow:0 0 ${size}px ${color},0 0 ${size * 2}px ${color}44;cursor:pointer;"></div>`,
+          html: `<div style="position:relative;width:${size*3}px;height:${size*3}px;display:flex;align-items:center;justify-content:center;"><div style="position:absolute;width:${size*3}px;height:${size*3}px;border-radius:50%;background:${color};opacity:0.15;animation:ripple1 2s infinite;"></div><div style="position:absolute;width:${size*2}px;height:${size*2}px;border-radius:50%;background:${color};opacity:0.2;animation:ripple2 2s infinite 0.5s;"></div><div style="position:relative;width:${size}px;height:${size}px;border-radius:50%;background:${color};border:2px solid rgba(255,255,255,0.5);box-shadow:0 0 ${size}px ${color},0 0 ${size*2}px ${color}66;cursor:pointer;z-index:2;"></div></div>`,
           iconSize: [size, size],
           iconAnchor: [size / 2, size / 2],
         })
@@ -265,7 +265,7 @@ function LeafletMap({ events, onSelectConflict }) {
           Dot size = estimated CO₂-eq
         </div>
       </div>
-      <style>{`.cow-tooltip { background: transparent !important; border: none !important; box-shadow: none !important; } .leaflet-tooltip-top:before { display: none; }`}</style>
+      <style>{`.cow-tooltip{background:transparent!important;border:none!important;box-shadow:none!important;}.leaflet-tooltip-top:before{display:none;}@keyframes ripple1{0%{transform:scale(0.8);opacity:0.15;}50%{transform:scale(1.3);opacity:0.03;}100%{transform:scale(0.8);opacity:0.15;}}@keyframes ripple2{0%{transform:scale(0.6);opacity:0.2;}50%{transform:scale(1);opacity:0.05;}100%{transform:scale(0.6);opacity:0.2;}}`}</style>
     </div>
   )
 }
