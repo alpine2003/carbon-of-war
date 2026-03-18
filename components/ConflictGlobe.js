@@ -58,8 +58,8 @@ export default function ConflictGlobe({ events, onSelectConflict }) {
         })
 
       const globe = window.Globe({ animateIn: true })(mountRef.current)
-        .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-night.jpg')
-        .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
+        .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg')
+        .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
         .pointsData(points)
         .pointLat('lat')
         .pointLng('lng')
@@ -97,7 +97,7 @@ export default function ConflictGlobe({ events, onSelectConflict }) {
         `)
 
       // Center on Middle East + Ukraine
-      globe.pointOfView({ lat: 30, lng: 35, altitude: 2.0 }, 0)
+      globe.pointOfView({ lat: 32, lng: 38, altitude: 2.2 }, 1000)
 
       // Auto-rotate
       globe.controls().autoRotate = true
