@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { TONS_PER_SECOND, formatTons, getEquivalences, estimateEventEmissions, aggregateEmissions } from '../lib/emissions'
 import dynamic from 'next/dynamic'
 const ConflictGlobe = dynamic(() => import('../components/ConflictGlobe'), { ssr: false })
+import dynamic from 'next/dynamic'
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('MAP')
@@ -127,7 +128,7 @@ export default function Dashboard() {
         {activeTab === 'MAP' && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-             <LeafletMap
+             <ConflictGlobe
                 events={events}
                 onSelectConflict={setSelectedConflict}
                 showSatellite={showSatellite}

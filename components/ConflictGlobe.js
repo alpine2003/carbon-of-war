@@ -636,8 +636,8 @@ export default function ConflictGlobe({ events, onSelectConflict, showSatellite,
     canvas.addEventListener('touchend', onTouchEnd)
 
     // Center on Middle East + Ukraine hotspot
-    targetRotRef.current = { x: 0.25, y: 0.7 }
-    rotationRef.current = { x: 0.25, y: 0.7 }
+    targetRotRef.current = { x: 0.2, y: 0.65 }
+    rotationRef.current = { x: 0.2, y: 0.65 }
 
     return () => {
       cancelAnimationFrame(animFrameRef.current)
