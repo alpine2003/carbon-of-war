@@ -3,6 +3,8 @@ import { useState, useEffect, useRef } from 'react'
 import { TONS_PER_SECOND, formatTons, getEquivalences, estimateEventEmissions, aggregateEmissions } from '../lib/emissions'
 import dynamic from 'next/dynamic'
 const ConflictGlobe = dynamic(() => import('../components/ConflictGlobe'), { ssr: false })
+import dynamic from 'next/dynamic'
+const ConflictGlobe = dynamic(() => import('../components/ConflictGlobe'), { ssr: false })
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('MAP')
