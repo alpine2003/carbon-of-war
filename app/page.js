@@ -127,7 +127,7 @@ export default function Dashboard() {
         {activeTab === 'MAP' && (
           <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
             <div style={{ flex: 1, position: 'relative' }}>
-             <ConflictGlobe
+             <LeafletMap
                 events={events}
                 onSelectConflict={setSelectedConflict}
                 showSatellite={showSatellite}

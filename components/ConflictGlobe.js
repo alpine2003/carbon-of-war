@@ -178,7 +178,7 @@ export default function ConflictGlobe({ events, onSelectConflict, showSatellite,
 
       // Auto-rotate when not interacting
       if (!interactingRef.current) {
-        targetRotRef.current.y += 0.0008
+        targetRotRef.current.y -= 0.0008
       }
 
       // Smooth rotation
@@ -636,8 +636,8 @@ export default function ConflictGlobe({ events, onSelectConflict, showSatellite,
     canvas.addEventListener('touchend', onTouchEnd)
 
     // Center on Middle East + Ukraine hotspot
-    targetRotRef.current = { x: 0.25, y: -0.6 }
-    rotationRef.current = { x: 0.25, y: -0.6 }
+    targetRotRef.current = { x: 0.25, y: 0.7 }
+    rotationRef.current = { x: 0.25, y: 0.7 }
 
     return () => {
       cancelAnimationFrame(animFrameRef.current)
