@@ -22,11 +22,21 @@ export default function Dashboard() {
     return () => cancelAnimationFrame(frameRef.current)
   }, [])
 
-  useEffect(() => {
-    fetch('/api/conflicts')
-      .then(r => r.json())
-      .then(data => setEvents(data.events || []))
-      .catch(console.error)
+ useEffect(() => {
+    // Initial fetch
+    const loadEvents = () => {
+      fetch('/api/conflicts', { cache: 'no-store' })
+        .then(r => r.json())
+        .then(data => {
+          setEvents(data.events || [])
+          console.log(`Loaded ${data.count} events — GDELT: ${data.gdeltCount || 0}, Verified: ${data.verifiedCount || 0}`)
+        })
+        .catch(console.error)
+    }
+    loadEvents()
+    // Auto-refresh every 5 minutes
+    const interval = setInterval(loadEvents, 5 * 60 * 1000)
+    return () => clearInterval(interval)
   }, [])
 
   const equivalences = getEquivalences(tons)
@@ -64,7 +74,7 @@ export default function Dashboard() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', fontSize: '11px', color: '#333' }}>
-          {events.length} EVENTS · LAST 30 DAYS
+          {events.length} EVENTS · AUTO-UPDATES EVERY 5 MIN
         </div>
       </div>
 
